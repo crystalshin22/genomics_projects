@@ -1,0 +1,293 @@
+---
+title: "2022-10-31 HW2A"
+output: html_notebook
+---
+
+**Due by 7pm on Monday 2022-10-31. Please upload your notebook in both `Rmd` and `html` format to courseworks.**
+
+## Install required packages
+
+```{r}
+# install required CRAN packages
+for (pkg in c("BiocManager", "data.table", "httr", "dendextend", "googledrive")) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    install.packages(pkg)
+  }
+}
+
+# install required Bioc packages
+for (pkg in c("limma", "edgeR", "GO.db", "org.Hs.eg.db","ReactomePA")) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    BiocManager::install(pkg, update = FALSE, ask = FALSE)
+  }
+}
+
+```
+
+## Problem 1: GTEx Data Analysis: Sun-Exposed Skin vs Non-Exposed Skin
+
+In this exercise we will explore another very useful large gene expression data set: the [GTEx](https://gtexportal.org/home/) data set. The original data set contains more than 10,000 samples from around 700 subjects. Here we will only use a subset of it for exercise: we select only samples from adipose (subcutaneous and visceral), skin (sun exposed and not sun exposed), and skeletal muscle. You can find the expression matrix and the sample sheet here:
+
+[gtex_subset_sample_sheet.txt](https://drive.google.com/file/d/1DRNoj3Oz-dvYyVTySaE_Xc6FExAhEu-M/view?usp=sharing)
+
+[normal_gtex_subset_rnaseq_counts.txt](https://drive.google.com/file/d/1fXP1U6MIJg7KyLxQjvl04L8qCIel-RAV/view?usp=sharing)
+
+For the purpose of this analysis, we are interested in the gene expression profile difference between the sun-exposed skin and non-exposed skin. Subset the count matrix leaving only the samples from `Skin - Not Sun Exposed (Suprapubic)` and `Skin - Sun Exposed (Lower leg)`.
+
+```{r}
+#========================================================
+# Your code here
+# Read and subset the data leaving only samples from skin
+#========================================================
+library(data.table)
+sample_file_path <- "gtex_subset_sample_sheet.txt"
+gt <- data.frame(fread(sample_file_path), row.names=1, check.names = FALSE)
+head(gt)
+gt_skin <- subset(gt, SMTSD %in% c('Skin - Not Sun Exposed (Suprapubic)','Skin - Sun Exposed (Lower leg)'))
+head(gt_skin)
+sample_id <- c(colnames(t(gt_skin[,0])))
+count_file_path <- "normal_gtex_subset_rnaseq_counts.txt"
+rc <- data.frame(fread(count_file_path), row.names=1, check.names=FALSE)
+head(rc)
+col.num <- which(colnames(rc) %in% sample_id)
+rc_skin <- rc[,c(col.num, col.num - 1)]
+rc_skin <- rc_skin[,1:112]
+head(rc_skin)
+gt_skin <- subset(gt_skin, select=c("SMTSD", "subject_id"))
+head(gt_skin)
+subject_id_unique <- unique(gt_skin[,2])
+length(subject_id_unique)
+```
+
+### Answer the following question
+
+#### 1.1. How many skin samples do you find in the count data? From how many unique subjects?
+
+I found 112 skin samples in the count data. There are 90 unique subjects.
+
+------------------------------------------------------------------------
+
+Since we will build a machine learning model later, we want to hold out a set of samples as the test set to evaluate our model. I've randomly chosen 10 subjects with paired samples. We will remove the 20 samples from these 10 subjects from our meta data and the rnaseq count table:
+
+[skin_test_subjects.txt](https://drive.google.com/file/d/186KsqwO_X39P_P83k2aRl2n75KReuTFy/view?usp=sharing)
+
+```{r}
+#==============================================================================
+# Your code here
+# Exclude samples from the 10 test subjects from your meta data and count table
+#==============================================================================
+# meta data - splitting indices for train & test set
+remove_subjects <- read.table("skin_test_subjects.txt")
+train_idx <- list()
+test_idx <- list()
+for (i in 1:140) {
+  trimmed <- substr(sample_id[i], 1, 10)
+  check <- FALSE
+  for (j in 1:10) {
+    if (trimmed == remove_subjects[j,]) {
+      test_idx <- append(test_idx, i)
+      check <- TRUE
+    }
+  }
+  if (!check) {
+    train_idx <- append(train_idx, i)
+  }
+}
+train_idx <- unlist(train_idx)
+test_idx <- unlist(test_idx)
+
+# count table - splitting indices for train & test set
+rc_skin_colnames <- colnames(rc_skin)
+rc_train_idx <- list()
+rc_test_idx <- list()
+for (i in 1:112) {
+  trimmed <- substr(rc_skin_colnames[i], 1, 10)
+  check <- FALSE
+  for (j in 1:10) {
+    if (trimmed == remove_subjects[j,]) {
+      rc_test_idx <- append(rc_test_idx, i)
+      check <- TRUE
+    }
+  }
+  if (!check) {
+    rc_train_idx <- append(rc_train_idx, i)
+  }
+}
+rc_train_idx <- unlist(rc_train_idx)
+rc_test_idx <- unlist(rc_test_idx)
+
+# meta data - create train & test set
+gt_skin_train <- gt_skin[train_idx,]
+gt_skin_test <- gt_skin[test_idx,]
+
+# count table - create train & test set
+rc_skin_train <- rc_skin[,rc_train_idx]
+rc_skin_test <- rc_skin[,rc_test_idx]
+```
+
+Now, following what we did in the lecture notes, create a `DGEList` object and perform the necessary preprocessing:
+
+1.  Construct a `DGEList` object, you can set `group=NULL` as all of the subjects should be healthy, normal
+2.  Build a design matrix using `model.matrix` function. You should put in `SMTSD` as covariates, *i.e.* use a model matrix formula of `~ SMTSD` to account for subject differences.
+3.  Perform gene filtering based on average expression using the `FilterByExpr` function
+4.  Calculate library normalization factors with `method="TMM"`
+5.  Estimate dispersion per each gene using the `estimateDisp`
+6.  Plot the biological coefficient of variation using the `plotBCV` function
+
+```{r}
+#==================================================
+# Your code here
+# Read the data and perform the 6 preprocessing steps described above
+#==================================================
+# Had to extract the SMTSD strings into a list so that those strings corresponding to the rc train set are only selected
+rc_train_colnames <- colnames(rc_skin_train)
+exposure <- list()
+for (i in 1:92) {
+  for (j in 1:140) {
+    if (rc_train_colnames[[i]] == sample_id[[j]]) {
+      exposure <- append(exposure, gt_skin[j,1])
+    }
+  }
+}
+exposure <- unlist(exposure)
+
+# Create initial dgelist
+library(edgeR)
+dgelist <- DGEList(rc_skin_train, remove.zeros = T, genes=rownames(rc_skin_train[,0]), group=NULL)
+dgelist$samples
+
+# Add sample information to dgelist (the SMTSD data - I'm calling it exposed for sun exposure true/false)
+sample_meta <- data.frame(SMTSD=substr(exposure,8,8)=='S', patient_id=substr(colnames(rc_skin_train),1,10), stringsAsFactors = FALSE, check.names=FALSE)
+rownames(sample_meta) <- colnames(rc_skin_train)
+dgelist <- DGEList(rc_skin_train, group=sample_meta$SMTSD, remove.zeros=T, samples=sample_meta, genes=rownames(rc_skin_train))
+dgelist$samples
+
+# Design matrix
+design <- model.matrix(~ SMTSD, data=sample_meta)
+head(design)
+
+# Gene filtering
+keep <- filterByExpr(dgelist, design=design)
+dgelist <- dgelist[keep,,keep.lib.sizes=FALSE]
+dim(dgelist)
+
+# Calculating library normalization factor
+dgelist <- calcNormFactors(dgelist, method="TMM")
+head(dgelist$samples)
+
+# Estimate dispersion
+dgelist <- estimateDisp(dgelist, design)
+
+# Plot
+plotBCV(dgelist)
+```
+
+Now, try to visualize the expression profile structure by `plotMDS` function, color the samples by `SMTSD`.
+
+```{r}
+#======================================================================
+# Your code here
+# Produce the MDS plot using plotMDS function with the two sample types
+# in different colors
+#======================================================================
+normal_sample_patients <- sample_meta[!sample_meta$SMTSD, "patient_id"]
+sample_meta_paired <- sample_meta[sample_meta$patient_id %in% normal_sample_patients,]
+sample_count <- aggregate(SMTSD ~ patient_id, data=sample_meta_paired, FUN=length)
+paired_patient_id <- sample_count[sample_count$SMTSD == 2, "patient_id"]
+sample_meta_paired <- sample_meta_paired[sample_meta_paired$patient_id %in% paired_patient_id,]
+rc_paired <- rc_skin_train[, rownames(sample_meta_paired)]
+
+dgelist_paired <- DGEList(counts=rc_paired, group=sample_meta_paired$SMTSD, remove.zeros=TRUE, samples=sample_meta_paired, genes=rownames(rc_paired))
+
+design_paired <- model.matrix(~ SMTSD, data=sample_meta_paired)
+keep <- filterByExpr(dgelist_paired, design=design_paired)
+dgelist_paired <- dgelist_paired[keep,,keep.lib.sizes=FALSE]
+dgelist_paired <- calcNormFactors(dgelist_paired, method="TMM")
+dgelist_paired <- estimateDisp(dgelist_paired, design_paired)
+
+sample_colors <- ifelse(dgelist_paired$samples$SMTSD, "maroon", "navy")
+plotMDS(dgelist_paired, labels=ifelse(dgelist_paired$samples$SMTSD, "e", "n"), col=sample_colors)
+```
+
+Now perform the quasi-likelihood fit and F-test comparing the sun-exposed skin samples and non-exposed skin samples. Note you will need to use the `coef` argument in the `glmQLFTest` function in order to get the significance estimation comparing the two sevirity states. You can directly set the `coef` argument as the corresponding column name in `design` matrix, or see [documentation](https://www.bioconductor.org/packages/release/bioc/vignettes/edgeR/inst/doc/edgeRUsersGuide.pdf) of the function to learn more about it.
+
+Perform the fit and contrast test and get the per-gene result with the `topTags` function.
+
+```{r}
+#=========================================================================
+# Your code here
+# Perform quasi-likelihood fit and quasi-likelihood F test, and obtain the 
+# results by `topTags` function
+#=========================================================================
+fit <- glmQLFit(dgelist_paired, design_paired)
+plotQLDisp(fit)
+
+qlf <- glmQLFTest(fit, coef=1)
+toptags <- as.data.frame(topTags(qlf, n=Inf))
+toptags
+```
+
+Now to perform some sanity check, do a boxplot using the logcpm on the top gene in your list. Remember to use the log CPM values for box plot as we did in class. You should observe that top gene should have a different distribution between the sample types. If you see the top gene does not separate , it would mean there might be a problem with you contrast.
+
+```{r}
+#============================================
+# Your code here
+# Do a boxplot on the top gene of your result
+#============================================
+#dot_colors <- ifelse((toptags$logFC > 1) & (toptags$FDR < 5e-2), "maroon", ifelse((toptags$logFC < -1) & (toptags$FDR < 5e-2), "navy", "gray"))
+#plot(x=toptags$logFC, y=-log10(toptags$FDR), pch=16, col=dot_colors)
+#to_annot <- (toptags$FDR < 1e-10) & (abs(toptags$logFC) > 5)
+#text(x=toptags$logFC[to_annot], y=-log10(toptags$FDR[to_annot]), labels=toptags$genes[to_annot], pos=4)
+
+
+logcpm <- cpm(dgelist_paired, log=TRUE)
+boxplot(logcpm["AJUBA", colnames(rc_paired)] ~ sample_meta_paired$SMTSD, OUTPCH=NA, col="dodgerblue4", xlab="sun exposure", ylab="AJUBA log2CPM")
+stripchart(logcpm["AJUBA", colnames(rc_paired)] ~ sample_meta_paired$SMTSD, vertical=TRUE, method="jitter", pch=16, col="black", add=TRUE)
+```
+
+### Answer the following question
+
+#### 1.2. List the top 10 genes that are most significantly over-expressed in the sun-exposed skin and the top 10 genes that are most significantly over-expressed in non-exposed skin. As ranked by their adjusted P value.\*\*
+
+Top 10 genes that are most over-expressed in the sun-exposed skin:
+
+------------------------------------------------------------------------
+
+Next, do a gene enrichment analysis on the Gene Ontology database using the [Reactome Pathway Analysis](https://www.bioconductor.org/packages/release/bioc/html/ReactomePA.html) library, more specifically, the `enrichPathway` function, as we did in the class. Use only the **top 100 genes overexpressed in sun-exposed skin samples with log2FC \> 1** as input. Do not mix the overexpressed genes and under-expressed genes.
+
+Note the function requires `Entrez gene ID` for input. Use the code snippet in the class to convert the gene symbols into gene IDs.
+
+```{r}
+#=====================================================
+# Your code here
+# Perform enrichment analysis using ReactomePA library
+#=====================================================
+library(httr)
+
+GENE_SYM_ID_LINK_BASE <- "https://www.genenames.org/cgi-bin/download/custom?col=gd_app_sym&col=gd_pub_eg_id&status=Approved&hgnc_dbtag=on&order_by=gd_app_sym_sort&format=text&submit=submit"
+response <- GET(GENE_SYM_ID_LINK_BASE)
+gene_sym_id <- data.frame(fread(text=httr::content(response, "parsed"), header=TRUE))
+colnames(gene_sym_id) <- c("gene_symbol","gene_id")
+
+gene_sym_id <- gene_sym_id[apply(gene_sym_id == "", 1, sum) == 0,]
+gene_sym_id <- gene_sym_id[apply(is.na(gene_sym_id), 1, sum) == 0,]
+
+gene_sym_id <- gene_sym_id[!duplicated(gene_sym_id$gene_id), ]
+rownames(gene_sym_id) <- gene_sym_id$gene_symbol
+```
+
+### Answer the following question
+
+#### 1.3. What are the top pathway enriched in the top 100 genes overexpressed in sun-exposed skins? How many genes overlap with the gene set? Can you give a hypothesis why is this gene pathway enriched in the sun-exposed skins?\*\*
+
+### Export the top gene list
+
+We will be building models for the next part of the homework. So please export all the significant genes of the `topTags` function (with arguments `n = Inf, p.value = 0.05`) to a text file using [`write.table`](https://www.rdocumentation.org/packages/utils/versions/3.6.2/topics/write.table) function.
+
+```{r}
+#=============================================================================
+# Your code here
+# Write the significant gene list to a text file using `write.table` function
+#=============================================================================
+
+```
