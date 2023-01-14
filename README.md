@@ -9,8 +9,12 @@ The repository is constantly updated as I complete more class/personal projects.
 ## Outline of Projects
 
 - **Biomarker Identification - Mirdametinib** [[code]](https://github.com/crystalshin22/genomics_projects/blob/main/Biomarker%20Identification%20-%20Mirdametinib.ipynb)
-    - Summary: Identifying different biomarkers that have led to the discovery of Mirdametinib using approaches illustrated in [Barretina et al.](https://www.nature.com/articles/nature11003) paper. Used machine learning models to shortlist features that are of highest important.
-    - Tools: MAF files, CCLE mutation data, sklearn `RandomForestRegressor`
+    - Summary: Identified different biomarkers that have led to the discovery of Mirdametinib using approaches illustrated in [Barretina et al.](https://www.nature.com/articles/nature11003) paper. Used machine learning models to shortlist features that are of highest important.
+    - Tools: sklearn `RandomForestRegressor`, MAF files, CCLE mutation data
+
+- **NBL Analysis 1 - Identifying Risk-Associated Mutations** [[code]](https://github.com/crystalshin22/genomics_projects/blob/main/NBL%20Analysis%201%20-%20Identifying%20Risk-Associated%20Mutations.ipynb)
+    - Summary: Studied the genomic data of neuroblastoma (NBL) samples to identify predictive mutations and gene expression features
+    - Tools: Fisher's exact test, MAF files
 
 - **COVID Spark Protein Alignment** [[code]](https://github.com/crystalshin22/genomics_projects/blob/main/COVID_Spark_Protein_Alignment.ipynb)<br>
     - Summary: Performed a multiple sequence alignment of different COVID-19 spark protein sequences, created a phylogenetic tree of the different variants, and assigned variant identities
