@@ -8,6 +8,10 @@ The repository is constantly updated as I complete more class/personal projects.
 
 ## Outline of Projects
 
+- **Biomarker Identification - Mirdametinib** [[code]](https://github.com/crystalshin22/genomics_projects/blob/main/Biomarker%20Identification%20-%20Mirdametinib.ipynb)
+    - Summary: Identifying different biomarkers that have led to the discovery of Mirdametinib using approaches illustrated in [Barretina et al.](https://www.nature.com/articles/nature11003) paper. Used machine learning models to shortlist features that are of highest important.
+    - Tools: MAF files, CCLE mutation data, sklearn `RandomForestRegressor`
+
 - **COVID Spark Protein Alignment** [[code]](https://github.com/crystalshin22/genomics_projects/blob/main/COVID_Spark_Protein_Alignment.ipynb)<br>
     - Summary: Performed a multiple sequence alignment of different COVID-19 spark protein sequences, created a phylogenetic tree of the different variants, and assigned variant identities
     - Tools: Biopython, Ipytree, MAFFT, FASTA files
@@ -15,3 +19,8 @@ The repository is constantly updated as I complete more class/personal projects.
 - **Prostate Cancer Risk Screening Using Germline Variant Data** [[code]](https://github.com/crystalshin22/genomics_projects/blob/main/Prostate%20Cancer%20Risk%20Screening%20Using%20Germline%20Variant%20Data.ipynb)<br>
     - Summary: Identified pathogenic germline variants from 'Clinvar' clinical variants database that could lead to prostate cancer and screened 1000 genome project dataset to check if the subjects carry those specific variants associated with high risk of prostate cancer
     - Tools: scikit-allel, VCF, Zarr files
+
+- **Calculating Mutation Load Using TCGA Breast Cancer Dataset** [[code]](https://github.com/crystalshin22/genomics_projects/blob/main/Calculating%20Mutation%20Load%20Using%20TCGA%20Breast%20Cancer%20Dataset.ipynb)
+    - Summary: Investigated how damages in mismatch repair pathway could affect the number of mutations, also known as mutation load, in breast cancer.
+    - Tools: MAF files, Mann-Whitney U test
+    
