@@ -1,0 +1,170 @@
+---
+title: "ss6631_midterm_part2"
+output: html_notebook
+---
+
+## PART 2: NBL gene expression profiles difference between high-risk and low-risk patients (10 pts)
+
+```{r}
+# install required CRAN packages
+for (pkg in c("BiocManager", "data.table", "httr", "dendextend", "googledrive")) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    install.packages(pkg)
+  }
+}
+
+# install required Bioc packages
+for (pkg in c("limma", "edgeR", "GO.db", "org.Hs.eg.db","ReactomePA")) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    BiocManager::install(pkg, update = FALSE, ask = FALSE)
+  }
+}
+```
+
+#### 2.1. Perform unsupervised learning on the expression data and visualize the result (e.g. MDS, PCA, hierarchical clustering, choose your favorite, but note if using PCA or hierarchical clustering, the expression value should be normalized), color the samples by risk group (high risk vs low risk). Describe if you see samples in different risk group can be separated in your plot.  (2 pts)
+
+```{r}
+# Load the target counts data
+library(data.table)
+target_counts_path <- "nbl_target_counts.train.txt"
+tc <- data.frame(fread(target_counts_path), row.names=1, check.names = FALSE)
+head(tc)
+
+# Load the clinical data
+clinical_data_path <- "nbl_target_clinical.txt"
+cl <- data.frame(fread(clinical_data_path), row.names=1, check.names = FALSE)
+cl_subset <- subset(cl, rownames(cl) %in% c(substr(colnames(tc), 1,16)))
+# Change column name of COG Risk Group to the one that doesn't have space
+colnames(cl_subset)[22] <- "high_risk"
+cl_subset[cl_subset=="High Risk"] <- TRUE
+cl_subset[cl_subset=="Low Risk"] <- FALSE
+cl_subset[cl_subset=="Intermediate Risk"] <- FALSE
+head(cl_subset)
+```
+
+```{r}
+# Create dgelist
+library(edgeR)
+dgelist <- DGEList(tc, remove.zeros = T, genes=rownames(tc[,0]), group=NULL)
+dgelist$samples
+
+# Add TMG information to dgelist
+sample_meta <- data.frame(risk=cl_subset['high_risk'], patient_id=cl_subset[,0], stringsAsFactors = FALSE, check.names=FALSE)
+dgelist <- DGEList(tc, group=sample_meta$risk, remove.zeros=T, samples=sample_meta, genes=rownames(tc))
+dgelist$samples
+```
+
+```{r}
+# Design matrix
+colnames(dgelist$samples)
+design <- model.matrix(~ high_risk, data=sample_meta)
+
+# Gene filtering
+keep <- filterByExpr(dgelist, design=design)
+dgelist <- dgelist[keep,,keep.lib.sizes=FALSE]
+dim(dgelist)
+
+# Calculating library normalization factor
+dgelist <- calcNormFactors(dgelist, method="TMM")
+head(dgelist$samples)
+
+# Estimate dispersion
+dgelist <- estimateDisp(dgelist, design)
+
+# Plot
+plotBCV(dgelist)
+```
+
+```{r}
+# Visualize the expression profile
+sample_colors <- ifelse(dgelist$samples$high_risk, "maroon", "navy")
+plotMDS(dgelist, labels=ifelse(dgelist$samples$high_risk, "h", "l"), col=sample_colors)
+```
+
+The data points for the low risk patients are more gathered around logFC value of zero, while those for the high risk patients are more dispersed throughout the plot.
+
+#### 2.2. Perform differential expression analysis between high risk group vs low risk group. List the top 10 genes over-expressed in the high risk group, and do a box plot showing the distribution of top over-expressed gene between two groups  (5 pts)
+
+```{r}
+fit <- glmQLFit(dgelist, design)
+qlf <- glmQLFTest(fit, coef = "high_riskTRUE")
+toptags <- data.frame(topTags(qlf, n = Inf, p.value = 0.05))
+
+head(toptags)
+```
+
+Top 10 genes over-expressed in the high-risk group:
+
+```{r}
+toptags[toptags$logFC > 0,][1:10,]
+```
+
+```{r}
+topgene <- "ALB"
+logcpm <- cpm(dgelist, log = TRUE)
+boxplot(logcpm[topgene, ] ~ sample_meta$high_risk,
+        outpch=NA,
+        col="dodgerblue4", xlab="High Risk", ylab="log2CPM")
+stripchart(logcpm[topgene, ] ~ sample_meta$high_risk,
+           vertical = TRUE, method = "jitter", pch = 16, col = "black", add = TRUE) 
+```
+
+#### 2.3. Perform reactome pathway analysis between high risk group versus the low risk group. Report your result. (3 pts)
+
+```{r}
+library(httr)
+
+GENE_SYM_ID_LINK_BASE <- "https://www.genenames.org/cgi-bin/download/custom?col=gd_app_sym&col=gd_pub_eg_id&status=Approved&hgnc_dbtag=on&order_by=gd_app_sym_sort&format=text&submit=submit"
+response <- GET(GENE_SYM_ID_LINK_BASE)
+gene_sym_id <- data.frame(fread(text=httr::content(response, "parsed"), header=TRUE))
+colnames(gene_sym_id) <- c("gene_symbol","gene_id")
+
+gene_sym_id <- gene_sym_id[apply(gene_sym_id == "", 1, sum) == 0,]
+gene_sym_id <- gene_sym_id[apply(is.na(gene_sym_id), 1, sum) == 0,]
+
+gene_sym_id <- gene_sym_id[!duplicated(gene_sym_id$gene_id), ]
+rownames(gene_sym_id) <- gene_sym_id$gene_symbol
+
+library(ReactomePA)
+top100_genes <- toptags[(toptags$logFC > 1) & (toptags$FDR < 0.05),]$genes[1:100]
+top100_genes_id <- gene_sym_id[top100_genes, "gene_id"]
+ep <- enrichPathway(top100_genes_id,pvalueCutoff = 0.05, readable=TRUE)
+head(ep)
+```
+
+#### Export toptags
+
+```{r}
+write.table(toptags, file="top_tags.txt", sep="\t", quote=F, col.names=NA)
+```
+
+#### TMM Normalization of the test data
+
+```{r}
+# Load test data
+test_data_path <- "nbl_target_counts.test.txt"
+test_data <- data.frame(fread(test_data_path), row.names=1, check.names = FALSE)
+head(test_data)
+
+# Create dgelist
+dgelist_test <- DGEList(test_data, remove.zeros = T, genes=rownames(test_data), group=NULL)
+dgelist_test$samples
+
+# Normalize using TMM
+dgelist_test <- calcNormFactors(dgelist_test, method="TMM")
+dgelist_test$samples
+
+# Logcpm
+logcpm_test <- cpm(dgelist_test, log = TRUE)
+```
+
+#### Export train and test logcpm
+
+```{r}
+# train
+write.table(logcpm, file="train_tmmcpm.txt", sep="\t", quote=F, col.names=NA)
+# test
+write.table(logcpm_test, file="test_tmmcpm.txt", sep="\t", quote=F, col.names=NA)
+```
+
+\
